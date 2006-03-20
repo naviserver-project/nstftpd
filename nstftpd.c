@@ -44,9 +44,10 @@
 #include <sys/socket.h>
 #include <string.h>
 
-#define MAX_BLKSIZE 1024
+#define MAX_BLKSIZE 1536
 
 typedef struct {
+   char *server;
    char *rootpath;
    int drivermode;
    int blksize;
@@ -71,6 +72,7 @@ typedef struct
    short timeout;
    struct stat fstat;
    struct sockaddr_in sa;
+   Ns_DString ds;
    int pktsize;
    union {
      char data[MAX_BLKSIZE];
@@ -90,6 +92,7 @@ typedef struct
 } TFTPRequest;
 
 static Ns_DriverProc TFTPProc;
+static TFTPRequest *TFTPNew(TFTPServer *server);
 static void TFTPProcessRequest(TFTPRequest *arg);
 static void TFTPFree(TFTPRequest *req);
 static int TFTPRequestProc(void *arg, Ns_Conn *conn);
@@ -141,6 +144,7 @@ NS_EXPORT int Ns_ModuleInit(char *server, char *module)
         }
         Ns_SockCallback(srvPtr->sock, TFTPCallback, srvPtr, NS_SOCK_READ|NS_SOCK_EXIT|NS_SOCK_EXCEPTION);
     }
+    srvPtr->server = ns_strdup(server);
     Tcl_DStringInit(&ds);
     if (srvPtr->rootpath == NULL) {
         srvPtr->rootpath = ns_strcopy(Ns_PagePath(&ds, server, "", 0));
@@ -209,12 +213,9 @@ TFTPRequestProc(void *arg, Ns_Conn *conn)
     TFTPServer *server = arg;
     Ns_Sock *sock = Ns_ConnSockPtr(conn);
     Ns_DString *ds = Ns_ConnSockContent(conn);
-    TFTPRequest *req = ns_calloc(1, sizeof(TFTPRequest));
+    TFTPRequest *req = TFTPNew(server);
 
     req->sa = sock->sa;
-    req->server = server;
-    req->blksize = server->blksize;
-    req->timeout = server->timeout;
     if (ds != NULL) {
         /* Data was read in the driver's proc during accept */
         memcpy(req->data, ds->string, ds->length);
@@ -250,11 +251,8 @@ TFTPCallback(SOCKET sock, void *arg, int when)
 
     switch(when) {
      case NS_SOCK_READ:
-         req = ns_calloc(1, sizeof(TFTPRequest));
+         req = TFTPNew(server);
          req->sock = sock;
-         req->server = server;
-         req->blksize = server->blksize;
-         req->timeout = server->timeout;
          if (TFTPRecv(req) > 0) {
              Ns_ThreadCreate(TFTPThread, (void *)req, 0, 0);
          } else {
@@ -289,31 +287,44 @@ TFTPProcessRequest(TFTPRequest* req)
     req->sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
 
     ptr = req->data + 2;
-    req->file = ns_strdup(ptr);
+    req->file = ptr;
     ptr += strlen(ptr) + 1;
     strncpy(req->mode, ptr, sizeof(req->mode) - 1);
     ptr += strlen(ptr) + 1;
-    snprintf(req->reply.data, sizeof(req->reply.data), "%s/%s", server->rootpath, req->file);
 
     /*
-     * Path security check
+     * Security checks
      */
 
-    if (!strstr(req->reply.data, "..")) {
-        req->fd = open(req->reply.data, O_RDONLY);
+    snprintf(req->reply.data, sizeof(req->reply.data), "%s/%s", server->rootpath, req->file);
+    req->file = ns_strdup(Ns_NormalizePath(&req->ds, req->reply.data));
+
+    if (!strncmp(req->ds.string, server->rootpath, strlen(server->rootpath))) {
+        req->fd = open(req->ds.string, O_RDONLY);
     }
+
     if (req->fd <= 0) {
     	req->reply.opcode = htons(5);
     	req->reply.block = htons(1);
     	strcpy(req->reply.data, "File Not Found");
     	nsent = sendto(req->sock, (char*)&req->reply, strlen(req->reply.data)+5, 0, (struct sockaddr*)&req->sa, sizeof(struct sockaddr_in));
-        Ns_Log(Error,"TFTP: FD %d: %s: file not found %s", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->reply.data);
+        Ns_Log(Error,"TFTP: FD %d: %s: file not found %s", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->file);
     	goto done;
     }
-
     fstat(req->fd, &req->fstat);
     if (server->debug > 2) {
-        Ns_Log(Notice,"TFTP: FD %d: %s: file %s, size %lu", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->reply.data, req->fstat.st_size);
+        Ns_Log(Notice,"TFTP: FD %d: %s: file %s, size %lu", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->file, req->fstat.st_size);
+    }
+
+    /*
+     * Invoke Tcl proc
+     */
+
+    if (server->tclproc) {
+        Ns_DStringPrintf(&req->ds, "%s %s %s", server->tclproc, req->file, ns_inet_ntoa(req->sa.sin_addr));
+        if (Ns_TclEval(NULL, server->server, req->ds.string) != NS_OK) {
+            goto done;
+        }
     }
 
     /*
@@ -395,6 +406,18 @@ done:
     }
 }
 
+static TFTPRequest *
+TFTPNew(TFTPServer *server)
+{
+    TFTPRequest *req = ns_calloc(1, sizeof(TFTPRequest));
+
+    req->server = server;
+    req->blksize = server->blksize;
+    req->timeout = server->timeout;
+    Ns_DStringInit(&req->ds);
+    return req;
+}
+
 static void
 TFTPFree(TFTPRequest *req)
 {
@@ -405,6 +428,7 @@ TFTPFree(TFTPRequest *req)
         if (req->fd > 0) {
     	    close(req->fd);
         }
+        Ns_DStringFree(&req->ds);
         ns_free(req->file);
         ns_free(req);
     }
