@@ -1,0 +1,40 @@
+TFTP server for NaviServer 4.x
+Release 1.0
+vlad@crystalballinc.com
+
+This is NaviServer module that implements TFTP server
+
+/*--------------------------------------------------------------------*/
+
+
+ Configuration
+ 
+   nsd.tcl
+ 
+   ns_section    ns/servers/server/modules
+   ns_param      nsudp        nstftpd.so
+ 
+   ns_section    ns/servers/server/module/nstftpd
+   ns_param      address    	0.0.0.0
+   ns_param      port       	80
+   ns_param      debug      	0
+   ns_param      timeout    	5
+   ns_param      blksize    	512
+   ns_param      retries    	1
+   ns_param      rootpath   	/tftpboot
+   ns_param	drivermode	off
+
+   If drivemode is true, tftp server will use connection threads and will
+   comply to all naviserver driver rules. Otherwise it will create thread 
+   for each request without any restrictions.
+   
+ Usage
+ 
+   ns_tftp ?-write? ?-timeout N? ?-blksize size? ipaddr port filename
+ 
+      ns_tftp read 127.0.0.1 69 file.txt
+ 
+ Authors
+ 
+     Vlad Seryakov vlad@crystalballinc.com
+
