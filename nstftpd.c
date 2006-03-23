@@ -57,7 +57,7 @@ typedef struct {
    int sock;
    int port;
    char *address;
-   char *tclproc;
+   char *proc;
 } TFTPServer;
 
 typedef struct
@@ -115,28 +115,29 @@ NS_EXPORT int Ns_ModuleInit(char *server, char *module)
     srvPtr = ns_calloc(1, sizeof(TFTPServer));
     path = Ns_ConfigGetPath(server,module,NULL);
     Ns_ConfigGetBool(path, "drivermode", &srvPtr->drivermode);
-    srvPtr->debug = Ns_ConfigIntRange(path, "debug", 0, 1, 10);
+    srvPtr->debug = Ns_ConfigIntRange(path, "debug", 0, 0, 10);
     srvPtr->retries = Ns_ConfigIntRange(path, "retries", 1, 1, 10);
     srvPtr->blksize = Ns_ConfigIntRange(path, "blksize", 512, 512, MAX_BLKSIZE);
     srvPtr->timeout = Ns_ConfigIntRange(path, "timeout", 5, 1, 1000);
     srvPtr->rootpath = ns_strcopy(Ns_ConfigGetValue(path, "rootpath"));
-    srvPtr->tclproc = Ns_ConfigGetValue(path, "tclproc");
+    srvPtr->proc = Ns_ConfigGetValue(path, "proc");
+    srvPtr->port = Ns_ConfigIntRange(path, "port", 69, 1, 99999);
+    srvPtr->address = Ns_ConfigGetValue(path, "address");
+
     if (srvPtr->drivermode) {
         init.version = NS_DRIVER_VERSION_1;
         init.name = "nstftp";
         init.proc = TFTPProc;
-        init.opts = NS_DRIVER_ASYNC|NS_DRIVER_UDP;
+        init.opts = NS_DRIVER_UDP;
         init.arg = srvPtr;
         init.path = NULL;
         if (Ns_DriverInit(server, module, &init) != NS_OK) {
-            Ns_Log(Error, "nstftp: driver init failed.");
+            Ns_Log(Error, "nstftpd: driver init failed.");
             ns_free(srvPtr);
             return NS_ERROR;
         }
         Ns_RegisterRequest(server, "TFTP",  "/", TFTPRequestProc, NULL, srvPtr, 0);
     } else {
-        srvPtr->port = Ns_ConfigIntRange(path, "port", 69, 1, 99999);
-        srvPtr->address = Ns_ConfigGetValue(path, "address");
         if ((srvPtr->sock = Ns_SockListenUdp(srvPtr->address, srvPtr->port)) == -1) {
             Ns_Log(Error,"nstftp: %s:%d: couldn't create socket: %s", srvPtr->address, srvPtr->port, strerror(errno));
             ns_free(srvPtr);
@@ -320,8 +321,8 @@ TFTPProcessRequest(TFTPRequest* req)
      * Invoke Tcl proc
      */
 
-    if (server->tclproc) {
-        Ns_DStringPrintf(&req->ds, "%s %s %s", server->tclproc, req->file, ns_inet_ntoa(req->sa.sin_addr));
+    if (server->proc) {
+        Ns_DStringPrintf(&req->ds, "%s {%s} %s", server->proc, req->file, ns_inet_ntoa(req->sa.sin_addr));
         if (Ns_TclEval(NULL, server->server, req->ds.string) != NS_OK) {
             goto done;
         }

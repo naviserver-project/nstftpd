@@ -22,7 +22,7 @@ This is NaviServer module that implements TFTP server
    ns_param      blksize    	512
    ns_param      retries    	1
    ns_param      rootpath   	/tftpboot
-   ns_param	drivermode	off
+   ns_param	 drivermode	off
 
    If drivemode is true, tftp server will use connection threads and will
    comply to all naviserver driver rules. Otherwise it will create thread 
