@@ -270,7 +270,7 @@ static void
 TFTPProcessRequest(TFTPRequest* req)
 {
     TFTPServer *server = req->server;
-    int nsent, nread;
+    int rc, nsent, nread;
     char *str, *ptr;
 
     if (server->debug > 1) {
@@ -294,16 +294,42 @@ TFTPProcessRequest(TFTPRequest* req)
     ptr += strlen(ptr) + 1;
 
     /*
-     * Security checks
+     * Normalize file name
      */
 
     snprintf(req->reply.data, sizeof(req->reply.data), "%s/%s", server->rootpath, req->file);
     req->file = ns_strdup(Ns_NormalizePath(&req->ds, req->reply.data));
-
-    if (!strncmp(req->ds.string, server->rootpath, strlen(server->rootpath))) {
-        req->fd = open(req->ds.string, O_RDONLY);
+    if (strncmp(req->file, server->rootpath, strlen(server->rootpath))) {
+        Ns_Log(Error,"TFTP: FD %d: %s: invalid path %s", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->file);
+        goto done;
     }
 
+    /*
+     * Invoke Tcl proc, it can return full pathname of the file to be returned
+     */
+
+    if (server->proc) {
+        Tcl_Interp *interp = Ns_TclAllocateInterp(server->server);
+        if (interp) {
+            rc = Tcl_VarEval(interp, server->proc, " {", req->file, "} ", ns_inet_ntoa(req->sa.sin_addr));
+            if (rc != NS_OK) {
+                goto done;
+            }
+            str = (char*)Tcl_GetStringResult(interp);
+            /* New file name was given */
+            if (str && *str) {
+                ns_free(req->file);
+                req->file = ns_strdup(str);
+            }
+            Ns_TclDeAllocateInterp(interp);
+        }
+    }
+
+    /*
+     * Open the file, after this point we just return the contents
+     */
+
+    req->fd = open(req->file, O_RDONLY);
     if (req->fd <= 0) {
     	req->reply.opcode = htons(5);
     	req->reply.block = htons(1);
@@ -315,17 +341,6 @@ TFTPProcessRequest(TFTPRequest* req)
     fstat(req->fd, &req->fstat);
     if (server->debug > 2) {
         Ns_Log(Notice,"TFTP: FD %d: %s: file %s, size %lu", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->file, req->fstat.st_size);
-    }
-
-    /*
-     * Invoke Tcl proc
-     */
-
-    if (server->proc) {
-        Ns_DStringPrintf(&req->ds, "%s {%s} %s", server->proc, req->file, ns_inet_ntoa(req->sa.sin_addr));
-        if (Ns_TclEval(NULL, server->server, req->ds.string) != NS_OK) {
-            goto done;
-        }
     }
 
     /*
