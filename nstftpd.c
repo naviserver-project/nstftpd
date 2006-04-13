@@ -51,6 +51,7 @@ typedef struct {
    char *server;
    char *rootpath;
    int drivermode;
+   int umask;
    int blksize;
    int timeout;
    int retries;
@@ -67,6 +68,7 @@ typedef struct
    char *file;
    char mode[16];
    int fd;
+   int op;
    int sock;
    int block;
    short blksize;
@@ -100,6 +102,7 @@ static int TFTPRequestProc(void *arg, Ns_Conn *conn);
 static int TFTPRecv(TFTPRequest *req);
 static int TFTPSend(TFTPRequest *req, char *buf, int len);
 static int TFTPSendACK(TFTPRequest *req, char *buf, int len);
+static int TFTPSendError(TFTPRequest *req, int errcode, char *msg, int err);
 static int TFTPCallback(SOCKET sock, void *arg, int when);
 static int TFTPInterpInit(Tcl_Interp *interp, void *arg);
 static int TFTPCmd(ClientData arg, Tcl_Interp *interp,int objc,Tcl_Obj *CONST objv[]);
@@ -117,6 +120,7 @@ NS_EXPORT int Ns_ModuleInit(char *server, char *module)
     path = Ns_ConfigGetPath(server,module,NULL);
     Ns_ConfigGetBool(path, "drivermode", &srvPtr->drivermode);
     srvPtr->debug = Ns_ConfigIntRange(path, "debug", 0, 0, 10);
+    srvPtr->umask = Ns_ConfigIntRange(path, "umask", 0644, 0, INT_MAX);
     srvPtr->retries = Ns_ConfigIntRange(path, "retries", 1, 1, 10);
     srvPtr->blksize = Ns_ConfigIntRange(path, "blksize", 512, 512, MAX_BLKSIZE);
     srvPtr->timeout = Ns_ConfigIntRange(path, "timeout", 5, 1, 1000);
@@ -226,7 +230,7 @@ TFTPRequestProc(void *arg, Ns_Conn *conn)
         /* For access log file */
         if (req->file) {
             ns_free(conn->request->line);
-            snprintf(req->data, sizeof(req->data), "GET /%s TFTP/1.0", req->file);
+            snprintf(req->data, sizeof(req->data), "%s %s TFTP/1.0", req->op == 1 ? "GET" : "PUT", req->file);
             conn->request->line = ns_strdup(req->data);
             Ns_ConnSetContentSent(conn, req->fstat.st_size);
         }
@@ -271,15 +275,19 @@ static void
 TFTPProcessRequest(TFTPRequest* req)
 {
     TFTPServer *server = req->server;
-    int rc, nsent, nread;
+    int rc, nread;
     char *str, *ptr;
+    Ns_Time timeout;
 
     if (server->debug > 1) {
         Ns_Log(Notice, "TFTP: FD %d: %s: connected, %d bytes", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->pktsize);
     }
+    req->op = htons(req->pkt.opcode);
     /* Check request type */
-    switch (htons(req->pkt.opcode)) {
+    switch (req->op) {
      case 1:
+         break;
+     case 2:
          break;
      default:
          Ns_Log(Notice, "TFTP: FD %d: %s: invalid request, opcode=%d, %d bytes", req->sock, ns_inet_ntoa(req->sa.sin_addr), htons(req->pkt.opcode), req->pktsize);
@@ -301,7 +309,7 @@ TFTPProcessRequest(TFTPRequest* req)
     snprintf(req->reply.data, sizeof(req->reply.data), "%s/%s", server->rootpath, req->file);
     req->file = ns_strdup(Ns_NormalizePath(&req->ds, req->reply.data));
     if (strncmp(req->file, server->rootpath, strlen(server->rootpath))) {
-        Ns_Log(Error,"TFTP: FD %d: %s: invalid path %s", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->file);
+        TFTPSendError(req, 2, "Invalid Path", ENOENT);
         goto done;
     }
 
@@ -330,14 +338,10 @@ TFTPProcessRequest(TFTPRequest* req)
      * Open the file, after this point we just return the contents
      */
 
-    req->fd = open(req->file, O_RDONLY);
+    req->fd = open(req->file, req->op == 1 ? O_RDONLY : O_CREAT|O_RDWR, server->umask);
     if (req->fd <= 0) {
-    	req->reply.opcode = htons(5);
-    	req->reply.block = htons(1);
-    	strcpy(req->reply.data, "File Not Found");
-    	nsent = sendto(req->sock, (char*)&req->reply, strlen(req->reply.data)+5, 0, (struct sockaddr*)&req->sa, sizeof(struct sockaddr_in));
-        Ns_Log(Error,"TFTP: FD %d: %s: file not found %s", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->file);
-    	goto done;
+        TFTPSendError(req, 1, "Invalid File", errno);
+        goto done;
     }
     fstat(req->fd, &req->fstat);
     if (server->debug > 2) {
@@ -398,24 +402,75 @@ TFTPProcessRequest(TFTPRequest* req)
         if (server->debug > 3) {
             Ns_Log(Notice, "TFTP: FD %d: %s: parameters: timeout=%d blksize=%d", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->timeout, req->blksize);
         }
+    } else
+    if (req->op == 2) {
+        // Send ACK on WRQ request
+        req->reply.opcode = htons(4);
+    	req->reply.block = htons(0);
+        if (TFTPSend(req, (char*)&req->reply, 4) == -1) {
+            goto done;
+        }
     }
-    /* Send data packets */
-    while (req->fd > 0) {
-    	req->reply.opcode = htons(3);
-    	req->reply.block = htons(++req->block);
-    	nread = read(req->fd, req->reply.data, req->blksize);
-        if (nread <= 0) {
-            Ns_Log(Error, "TFTP: FD %d: %s: read: %s", req->sock, ns_inet_ntoa(req->sa.sin_addr), strerror(errno));
-            break;
-        }
-        // Last block read
-        if (nread < req->blksize) {
-            close(req->fd);
-            req->fd = -1;
-        }
-        if (TFTPSendACK(req, (char*)&req->reply, nread + 4) == -1) {
-            break;
-        }
+    switch (req->op) {
+     case 1:
+         while (req->fd > 0) {
+             req->reply.opcode = htons(3);
+             req->reply.block = htons(++req->block);
+             nread = read(req->fd, req->reply.data, req->blksize);
+             if (nread <= 0) {
+                 Ns_Log(Error, "TFTP: FD %d: %s: read: %s", req->sock, ns_inet_ntoa(req->sa.sin_addr), strerror(errno));
+                 break;
+             }
+             // Last block read
+             if (nread < req->blksize) {
+                 close(req->fd);
+                 req->fd = -1;
+             }
+             // Send ACK and wait for the next block
+             if (TFTPSendACK(req, (char*)&req->reply, nread + 4) == -1) {
+                 break;
+             }
+         }
+         break;
+
+     case 2:
+         while (req->fd > 0) {
+             Ns_GetTime(&timeout);
+             Ns_IncrTime(&timeout, req->timeout, 0);
+             if (Ns_SockTimedWait(req->sock, NS_SOCK_READ, &timeout) != NS_OK) {
+                 Ns_Log(Error, "TFTP: FD %d: %s: timeout %d secs", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->timeout);
+                 goto done;
+             }
+             if (TFTPRecv(req) <= 0) {
+                 goto done;
+             }
+             if (htons(req->pkt.opcode) == 3) {
+                 if (htons(req->pkt.block) == req->block + 1) {
+                     if (req->pktsize > 4) {
+                         if (write(req->fd, req->pkt.data, req->pktsize - 4) == -1) {
+                             TFTPSendError(req, 3, "Unable to write", errno);
+                             goto done;
+                         }
+                         req->block++;
+                     }
+                     if (req->block == USHRT_MAX) {
+                         TFTPSendError(req, 3, "File Too Large", EFBIG);
+                         goto done;
+                     }
+                     if (req->pktsize - 4 < req->blksize) {
+                         close(req->fd);
+                         req->fd = -1;
+                     }
+                 }
+                 // Send ACK with new block number
+                 req->reply.opcode = htons(4);
+                 req->reply.block = htons(req->block);
+                 if (TFTPSend(req, (char*)&req->reply, 4) == -1) {
+                     goto done;
+                 }
+             }
+         }
+         break;
     }
 done:
     if (server->debug > 1) {
@@ -478,6 +533,19 @@ TFTPSend(TFTPRequest *req, char *buf, int len)
 }
 
 static int
+TFTPSendError(TFTPRequest *req, int errcode, char *msg, int err)
+{
+    int nsent;
+
+    req->reply.opcode = htons(5);
+    req->reply.block = htons(errcode);
+    strcpy(req->reply.data, msg);
+    nsent = sendto(req->sock, (char*)&req->reply, strlen(req->reply.data)+5, 0, (struct sockaddr*)&req->sa, sizeof(struct sockaddr_in));
+    Ns_Log(Error,"TFTP: FD %d: %s: %s %s: %s", req->sock, ns_inet_ntoa(req->sa.sin_addr), msg, req->file, strerror(err));
+    return nsent;
+}
+
+static int
 TFTPSendACK(TFTPRequest *req, char *buf, int len)
 {
     Ns_Time timeout;
@@ -494,7 +562,7 @@ TFTPSendACK(TFTPRequest *req, char *buf, int len)
               Ns_Log(Error, "TFTP: FD %d: %s: timeout %d secs", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->timeout);
               return 0;
           }
-          if(TFTPRecv(req) <= 0) {
+          if (TFTPRecv(req) <= 0) {
               return -1;
           }
        } while (htons(req->pkt.opcode) != 4 && htons(req->pkt.block) != req->block);
