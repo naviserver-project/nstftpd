@@ -43,6 +43,7 @@
 #include <signal.h>
 #include <sys/socket.h>
 #include <string.h>
+#include <unistd.h>
 
 #define MAX_BLKSIZE 1536
 
@@ -511,15 +512,16 @@ TFTPCmd(ClientData arg, Tcl_Interp *interp, int objc, Tcl_Obj *CONST objv[])
     Ns_Time now;
     Tcl_DString ds;
     TFTPRequest req;
-    char *address = 0, *filename = 0;
     socklen_t salen = sizeof(struct sockaddr_in);
-    int len, port, rc = TCL_OK, blksize = 512, timeout = 5, write = 0;
+    char *address = NULL, *filename = NULL, *outfile = NULL;
+    int len, port, total = 0, outfd = -1, rc = TCL_OK, blksize = 512, timeout = 5, dowrite = 0;
 
     Ns_ObjvSpec opts[] = {
-        {"-write",    Ns_ObjvBool,  &write,   NULL},
-        {"-timeout",  Ns_ObjvInt,   &timeout, NULL},
-        {"-blksize",  Ns_ObjvInt,   &blksize, NULL},
-        {"--",        Ns_ObjvBreak,  NULL,    NULL},
+        {"-write",    Ns_ObjvBool,   &dowrite, NULL},
+        {"-timeout",  Ns_ObjvInt,    &timeout, NULL},
+        {"-blksize",  Ns_ObjvInt,    &blksize, NULL},
+        {"-outfile",  Ns_ObjvString, &outfile, NULL},
+        {"--",        Ns_ObjvBreak,   NULL,    NULL},
         {NULL, NULL, NULL, NULL}
     };
     Ns_ObjvSpec args[] = {
@@ -536,6 +538,13 @@ TFTPCmd(ClientData arg, Tcl_Interp *interp, int objc, Tcl_Obj *CONST objv[])
         sprintf(req.data, "%s:%d", address, port);
         Tcl_AppendResult(interp, "invalid address ", req.data, 0);
         return TCL_ERROR;
+    }
+    if (outfile != NULL) {
+        outfd = open(outfile, O_CREAT|O_RDWR, 0644);
+        if (outfd == -1) {
+            Tcl_AppendResult(interp, "error opening file ", outfile, ": ", strerror(errno), 0);
+            return TCL_ERROR;
+        }
     }
     req.sock = socket(AF_INET, SOCK_DGRAM, 0);
     if (req.sock < 0) {
@@ -554,19 +563,29 @@ TFTPCmd(ClientData arg, Tcl_Interp *interp, int objc, Tcl_Obj *CONST objv[])
        Ns_GetTime(&now);
        Ns_IncrTime(&now, timeout, 0);
        if (Ns_SockTimedWait(req.sock, NS_SOCK_READ, &now) != NS_OK) {
-            Tcl_DStringSetLength(&ds, 0);
-            Ns_DStringPrintf(&ds, "timeout");
-            rc = TCL_ERROR;
-            goto done;
+           Tcl_DStringSetLength(&ds, 0);
+           Ns_DStringPrintf(&ds, "timeout");
+           rc = TCL_ERROR;
+           goto done;
        }
            len = recvfrom(req.sock, &req.reply, sizeof(req.reply), 0, (struct sockaddr*)&req.sa, &salen);
            if (len > 0) {
-               Tcl_DStringAppend(&ds, req.reply.data, len - 5);
+               if (outfile != NULL) {
+                   write(outfd, req.reply.data, len);
+               } else {
+                   Tcl_DStringAppend(&ds, req.reply.data, len);
+               }
+               total += len;
            }
     } while (1);
 done:
     close(req.sock);
-    Tcl_SetObjResult(interp, Tcl_NewByteArrayObj((unsigned char*)ds.string, ds.length));
+    if (outfile != NULL) {
+        close(outfd);
+        Tcl_SetObjResult(interp, Tcl_NewIntObj(total));
+    } else {
+        Tcl_SetObjResult(interp, Tcl_NewByteArrayObj((unsigned char*)ds.string, ds.length));
+    }
     Tcl_DStringFree(&ds);
     return rc;
 }
