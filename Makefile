@@ -12,5 +12,12 @@ MOD      =  nstftpd.so
 #
 OBJS     = nstftpd.o
 
+PROCS   = tftpd_procs.tcl
+
+INSTALL += install-procs
+
+install-procs: $(PROCS)
+	for f in $(PROCS); do $(INSTALL_SH) $$f $(INSTTCL)/; done
+
 include  $(NAVISERVER)/include/Makefile.module
 

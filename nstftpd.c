@@ -230,7 +230,7 @@ TFTPRequestProc(void *arg, Ns_Conn *conn)
         /* For access log file */
         if (req->file) {
             ns_free(conn->request->line);
-            snprintf(req->data, sizeof(req->data), "%s %s TFTP/1.0", req->op == 1 ? "GET" : "PUT", req->file);
+            snprintf(req->data, sizeof(req->data), "%s %s TFTP/2.0", req->op == 1 ? "GET" : "PUT", req->file);
             conn->request->line = ns_strdup(req->data);
             Ns_ConnSetContentSent(conn, req->fstat.st_size);
         }
@@ -320,8 +320,9 @@ TFTPProcessRequest(TFTPRequest* req)
     if (server->proc) {
         Tcl_Interp *interp = Ns_TclAllocateInterp(server->server);
         if (interp) {
-            rc = Tcl_VarEval(interp, server->proc, " {", req->file, "} ", ns_inet_ntoa(req->sa.sin_addr));
+            rc = Tcl_VarEval(interp, server->proc, " ", req->op == 1 ? "r" : "w", " {", req->file, "} ", ns_inet_ntoa(req->sa.sin_addr), 0);
             if (rc != NS_OK) {
+                TFTPSendError(req, 2, (char*)Tcl_GetStringResult(interp), EACCES);
                 goto done;
             }
             str = (char*)Tcl_GetStringResult(interp);
