@@ -190,7 +190,7 @@ TFTPProc(Ns_DriverCmd cmd, Ns_Sock *sock, struct iovec *bufs, int nbufs)
              ds->length = TFTPProc(DriverRecv, sock, &iobuf, 1);
              return NS_OK;
          }
-         break;
+         return NS_FATAL;
 
      case DriverRecv:
          len = recvfrom(sock->sock, bufs->iov_base, bufs->iov_len, 0, (struct sockaddr*)&sock->sa, (socklen_t*)&salen);
