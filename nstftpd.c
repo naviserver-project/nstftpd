@@ -79,13 +79,20 @@ typedef struct
    int pktsize;
    union {
      char data[MAX_BLKSIZE];
-     struct {
-        unsigned short opcode;
-        union {
-          unsigned short block;
-          char data[512];
-       };
-     } pkt;
+     union {
+        struct {
+           unsigned short opcode;
+           unsigned short block;
+           char data[MAX_BLKSIZE-4];
+        } pkt;
+        struct {
+           unsigned short opcode;
+           union {
+             unsigned short block;
+             char data[512];
+          };
+        } ack;
+     };
    };
    struct {
      unsigned short opcode;
@@ -245,6 +252,8 @@ static void
 TFTPThread(void *arg)
 {
     TFTPRequest *req = (TFTPRequest*)arg;
+
+    Ns_ThreadSetName("tftp:%d:%s", htons(req->pkt.opcode), ns_inet_ntoa(req->sa.sin_addr));
     TFTPProcessRequest(req);
     TFTPFree(req);
 }
@@ -278,6 +287,7 @@ TFTPProcessRequest(TFTPRequest* req)
     int rc, nread;
     char *str, *ptr;
     Ns_Time timeout;
+    struct sockaddr_in sa;
 
     if (server->debug > 1) {
         Ns_Log(Notice, "TFTP: FD %d: %s: connected, %d bytes", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->pktsize);
@@ -295,6 +305,14 @@ TFTPProcessRequest(TFTPRequest* req)
          goto done;
     }
     req->sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    sa.sin_family = AF_INET;
+    sa.sin_addr.s_addr = INADDR_ANY;
+    sa.sin_port = 0;
+    if (bind(req->sock, (struct sockaddr*)&sa, sizeof(sa)) == -1) {
+        Ns_Log(Notice, "TFTP: FD %d: %s: bind error: %s", req->sock, ns_inet_ntoa(req->sa.sin_addr), strerror(errno));
+        goto done;
+    }
+    connect(req->sock, (struct sockaddr*)&req->sa, sizeof(struct sockaddr_in));
 
     ptr = req->data + 2;
     req->file = ptr;
@@ -356,7 +374,7 @@ TFTPProcessRequest(TFTPRequest* req)
     if (*ptr) {
     	memset(&req->pkt, 0, sizeof(req->pkt));
     	req->pkt.opcode = htons(6);
-    	str = req->pkt.data;
+    	str = req->ack.data;
     	while (*ptr) {
     	    if (!strcasecmp(ptr, "blksize")) {
     	    	strcpy(str, ptr);
@@ -517,6 +535,9 @@ TFTPRecv(TFTPRequest *req)
         Ns_Log(Error,"TFTP: FD %d: %s: recvfrom: %s", req->sock, ns_inet_ntoa(req->sa.sin_addr), strerror(errno));
         return -1;
     }
+    if (req->server->debug > 5) {
+        Ns_Log(Notice,"TFTP: FD %d: %s: recv: block %d, op %d, %d bytes", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->block, htons(req->pkt.opcode), req->pktsize);
+    }
     return req->pktsize;
 }
 
@@ -529,6 +550,9 @@ TFTPSend(TFTPRequest *req, char *buf, int len)
     if (nsent <= 0) {
         Ns_Log(Error, "TFTP: FD %d: %s: sendto: len=%d: %s", req->sock, ns_inet_ntoa(req->sa.sin_addr), len, strerror(errno));
         return -1;
+    }
+    if (req->server->debug > 5) {
+        Ns_Log(Notice,"TFTP: FD %d: %s: send: block %d, %d bytes", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->block, nsent);
     }
     return nsent;
 }
@@ -620,10 +644,10 @@ TFTPCmd(ClientData arg, Tcl_Interp *interp, int objc, Tcl_Obj *CONST objv[])
         Tcl_AppendResult(interp, "socket error ", strerror(errno), 0);
         return TCL_ERROR;
     }
-    req.pkt.opcode = htons(1);
-    len = snprintf(req.pkt.data, sizeof(req.pkt.data), "%s%cblksize%c%d%ctsize%c0%ctimeout%c%d",
+    req.ack.opcode = htons(1);
+    len = snprintf(req.ack.data, sizeof(req.pkt.data), "%s%cblksize%c%d%ctsize%c0%ctimeout%c%d",
                    filename, 0, 0, blksize, 0, 0, 0, 0, timeout);
-    if (sendto(req.sock, (char*)&req.pkt, len+5, 0, (struct sockaddr*)&req.sa, salen) < 0) {
+    if (sendto(req.sock, (char*)&req.ack, len+5, 0, (struct sockaddr*)&req.sa, salen) < 0) {
         Tcl_AppendResult(interp, "sendto error ", strerror(errno), 0);
         return TCL_ERROR;
     }
