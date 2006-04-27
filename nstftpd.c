@@ -357,7 +357,7 @@ TFTPProcessRequest(TFTPRequest* req)
      * Open the file, after this point we just return the contents
      */
 
-    req->fd = open(req->file, req->op == 1 ? O_RDONLY : O_CREAT|O_RDWR, server->umask);
+    req->fd = open(req->file, req->op == 1 ? O_RDONLY : O_CREAT|O_RDWR|O_TRUNC, server->umask);
     if (req->fd <= 0) {
         TFTPSendError(req, 1, "Invalid File", errno);
         goto done;
