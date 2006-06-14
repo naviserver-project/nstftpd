@@ -16,8 +16,9 @@ PROCS   = tftpd_procs.tcl
 
 INSTALL += install-procs
 
+include  $(NAVISERVER)/include/Makefile.module
+
 install-procs: $(PROCS)
 	for f in $(PROCS); do $(INSTALL_SH) $$f $(INSTTCL)/; done
 
-include  $(NAVISERVER)/include/Makefile.module
 
