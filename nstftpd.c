@@ -101,16 +101,17 @@ typedef struct
    } reply;
 } TFTPRequest;
 
-static Ns_DriverProc TFTPProc;
+static Ns_DriverProc TFTPDriverProc;
+static Ns_SockProc TFTPSockProc;
 static TFTPRequest *TFTPNew(TFTPServer *server);
 static void TFTPProcessRequest(TFTPRequest *arg);
 static void TFTPFree(TFTPRequest *req);
+static void TFTPThread(void *arg);
 static int TFTPRequestProc(void *arg, Ns_Conn *conn);
 static int TFTPRecv(TFTPRequest *req);
 static int TFTPSend(TFTPRequest *req, char *buf, int len);
 static int TFTPSendACK(TFTPRequest *req, char *buf, int len);
 static int TFTPSendError(TFTPRequest *req, int errcode, char *msg, int err);
-static int TFTPCallback(SOCKET sock, void *arg, int when);
 static int TFTPInterpInit(Tcl_Interp *interp, void *arg);
 static int TFTPCmd(ClientData arg, Tcl_Interp *interp,int objc,Tcl_Obj *CONST objv[]);
 
@@ -139,7 +140,7 @@ NS_EXPORT int Ns_ModuleInit(char *server, char *module)
     if (srvPtr->drivermode) {
         init.version = NS_DRIVER_VERSION_1;
         init.name = "nstftp";
-        init.proc = TFTPProc;
+        init.proc = TFTPDriverProc;
         init.opts = NS_DRIVER_UDP;
         init.arg = srvPtr;
         init.path = NULL;
@@ -155,12 +156,12 @@ NS_EXPORT int Ns_ModuleInit(char *server, char *module)
             ns_free(srvPtr);
             return NS_ERROR;
         }
-        Ns_SockCallback(srvPtr->sock, TFTPCallback, srvPtr, NS_SOCK_READ|NS_SOCK_EXIT|NS_SOCK_EXCEPTION);
+        Ns_SockCallback(srvPtr->sock, TFTPSockProc, srvPtr, NS_SOCK_READ|NS_SOCK_EXIT|NS_SOCK_EXCEPTION);
     }
     srvPtr->server = ns_strdup(server);
     Tcl_DStringInit(&ds);
     if (srvPtr->rootpath == NULL) {
-        srvPtr->rootpath = ns_strcopy(Ns_PagePath(&ds, server, "", 0));
+        srvPtr->rootpath = ns_strcopy(Ns_PagePath(&ds, server, "", NULL));
     }
     Ns_TclRegisterTrace(server, TFTPInterpInit, srvPtr, NS_TCL_TRACE_CREATE);
     Tcl_DStringFree(&ds);
@@ -175,7 +176,7 @@ TFTPInterpInit(Tcl_Interp *interp, void *arg)
 }
 
 static int
-TFTPProc(Ns_DriverCmd cmd, Ns_Sock *sock, struct iovec *bufs, int nbufs)
+TFTPDriverProc(Ns_DriverCmd cmd, Ns_Sock *sock, struct iovec *bufs, int nbufs)
 {
     int len;
     Ns_DString *ds;
@@ -192,9 +193,10 @@ TFTPProc(Ns_DriverCmd cmd, Ns_Sock *sock, struct iovec *bufs, int nbufs)
          if (Ns_DriverSockRequest(sock, "TFTP / TFTP/1.0") == NS_OK) {
              ds = Ns_DriverSockContent(sock);
              Tcl_DStringSetLength(ds, sock->driver->bufsize);
+             /* Perform network read via driver recv call */
              iobuf.iov_base = ds->string;
              iobuf.iov_len = ds->length;
-             ds->length = TFTPProc(DriverRecv, sock, &iobuf, 1);
+             ds->length = TFTPDriverProc(DriverRecv, sock, &iobuf, 1);
              return NS_OK;
          }
          return NS_FATAL;
@@ -218,6 +220,28 @@ TFTPProc(Ns_DriverCmd cmd, Ns_Sock *sock, struct iovec *bufs, int nbufs)
          break;
     }
     return NS_ERROR;
+}
+
+static int
+TFTPSockProc(SOCKET sock, void *arg, int when)
+{
+    TFTPServer *server = (TFTPServer*)arg;
+    TFTPRequest *req;
+
+    switch(when) {
+     case NS_SOCK_READ:
+         req = TFTPNew(server);
+         req->sock = sock;
+         if (TFTPRecv(req) > 0) {
+             Ns_ThreadCreate(TFTPThread, (void *)req, 0, 0);
+         } else {
+             req->sock = -1;
+             TFTPFree(req);
+         }
+         return NS_TRUE;
+    }
+    close(sock);
+    return NS_FALSE;
 }
 
 static int
@@ -248,6 +272,7 @@ TFTPRequestProc(void *arg, Ns_Conn *conn)
     return NS_OK;
 }
 
+
 static void
 TFTPThread(void *arg)
 {
@@ -256,28 +281,6 @@ TFTPThread(void *arg)
     Ns_ThreadSetName("tftp:%d:%s", htons(req->pkt.opcode), ns_inet_ntoa(req->sa.sin_addr));
     TFTPProcessRequest(req);
     TFTPFree(req);
-}
-
-static int
-TFTPCallback(SOCKET sock, void *arg, int when)
-{
-    TFTPServer *server = (TFTPServer*)arg;
-    TFTPRequest *req;
-
-    switch(when) {
-     case NS_SOCK_READ:
-         req = TFTPNew(server);
-         req->sock = sock;
-         if (TFTPRecv(req) > 0) {
-             Ns_ThreadCreate(TFTPThread, (void *)req, 0, 0);
-         } else {
-             req->sock = -1;
-             TFTPFree(req);
-         }
-         return NS_TRUE;
-    }
-    close(sock);
-    return NS_FALSE;
 }
 
 static void
