@@ -141,7 +141,7 @@ NS_EXPORT int Ns_ModuleInit(char *server, char *module)
         init.version = NS_DRIVER_VERSION_1;
         init.name = "nstftp";
         init.proc = TFTPDriverProc;
-        init.opts = NS_DRIVER_UDP;
+        init.opts = NS_DRIVER_UDP|NS_DRIVER_ASYNC|NS_DRIVER_QUEUE_ONREAD;
         init.arg = srvPtr;
         init.path = NULL;
         if (Ns_DriverInit(server, module, &init) != NS_OK) {
@@ -179,27 +179,17 @@ static int
 TFTPDriverProc(Ns_DriverCmd cmd, Ns_Sock *sock, struct iovec *bufs, int nbufs)
 {
     int len;
-    Ns_DString *ds;
-    struct iovec iobuf;
     socklen_t salen = sizeof(struct sockaddr_in);
 
     switch (cmd) {
-     case DriverAccept:
+     case DriverQueue:
+
          /*
-          * Read the packet and store it in the request buffer, registered proc
-          * then will use that data for processing
+          *  Assign request line so our registered proc will be called
           */
 
-         if (Ns_DriverSockRequest(sock, "TFTP / TFTP/1.0") == NS_OK) {
-             ds = Ns_DriverSockContent(sock);
-             Tcl_DStringSetLength(ds, sock->driver->bufsize);
-             /* Perform network read via driver recv call */
-             iobuf.iov_base = ds->string;
-             iobuf.iov_len = ds->length;
-             ds->length = TFTPDriverProc(DriverRecv, sock, &iobuf, 1);
-             return NS_OK;
-         }
-         return NS_FATAL;
+         return Ns_DriverSetRequest(sock, "TFTP / TFTP/1.0");
+         break;
 
      case DriverRecv:
          len = recvfrom(sock->sock, bufs->iov_base, bufs->iov_len, 0, (struct sockaddr*)&sock->sa, (socklen_t*)&salen);
@@ -207,6 +197,7 @@ TFTPDriverProc(Ns_DriverCmd cmd, Ns_Sock *sock, struct iovec *bufs, int nbufs)
              Ns_Log(Error,"DriverRecv: %s: FD %d: recv from %s: %s", sock->driver->name, sock->sock, ns_inet_ntoa(sock->sa.sin_addr), strerror(errno));
          }
          return len;
+         break;
 
      case DriverSend:
          len = sendto(sock->sock, bufs->iov_base, bufs->iov_len, 0, (struct sockaddr*)&sock->sa, sizeof(struct sockaddr_in));
@@ -214,6 +205,7 @@ TFTPDriverProc(Ns_DriverCmd cmd, Ns_Sock *sock, struct iovec *bufs, int nbufs)
              Ns_Log(Error,"DriverSend: %s: FD %d: sendto %d bytes to %s: %s", sock->driver->name, sock->sock, len, ns_inet_ntoa(sock->sa.sin_addr), strerror(errno));
          }
          return len;
+         break;
 
      case DriverClose:
      case DriverKeep:
