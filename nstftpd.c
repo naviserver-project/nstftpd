@@ -92,6 +92,11 @@ typedef struct
              char data[512];
           };
         } ack;
+        struct {
+          unsigned short opcode;
+          unsigned short errcode;
+          unsigned char msg[508];
+        } error;
      };
    };
    struct {
@@ -281,7 +286,6 @@ TFTPProcessRequest(TFTPRequest* req)
     TFTPServer *server = req->server;
     int rc, nread;
     char *str, *ptr;
-    Ns_Time timeout;
     struct sockaddr_in sa;
 
     if (server->debug > 1) {
@@ -293,6 +297,11 @@ TFTPProcessRequest(TFTPRequest* req)
      case 1:
          break;
      case 2:
+         break;
+     case 5:
+         Ns_Log(Notice, "TFTP: FD %d: %s: error msg, %d: %s", req->sock, ns_inet_ntoa(req->sa.sin_addr), htons(req->error.errcode), req->error.msg);
+         req->sock = -1;
+         goto done;
          break;
      default:
          Ns_Log(Notice, "TFTP: FD %d: %s: invalid request, opcode=%d, %d bytes", req->sock, ns_inet_ntoa(req->sa.sin_addr), htons(req->pkt.opcode), req->pktsize);
@@ -416,7 +425,7 @@ TFTPProcessRequest(TFTPRequest* req)
         if (server->debug > 3) {
             Ns_Log(Notice, "TFTP: FD %d: %s: parameters: timeout=%d blksize=%d", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->timeout, req->blksize);
         }
-    } else
+    }
     if (req->op == 2) {
         // Send ACK on WRQ request
         req->reply.opcode = htons(4);
@@ -431,7 +440,7 @@ TFTPProcessRequest(TFTPRequest* req)
              req->reply.opcode = htons(3);
              req->reply.block = htons(++req->block);
              nread = read(req->fd, req->reply.data, req->blksize);
-             if (nread <= 0) {
+             if (nread < 0) {
                  Ns_Log(Error, "TFTP: FD %d: %s: read: %s", req->sock, ns_inet_ntoa(req->sa.sin_addr), strerror(errno));
                  break;
              }
@@ -449,9 +458,7 @@ TFTPProcessRequest(TFTPRequest* req)
 
      case 2:
          while (req->fd > 0) {
-             Ns_GetTime(&timeout);
-             Ns_IncrTime(&timeout, req->timeout, 0);
-             if (Ns_SockTimedWait(req->sock, NS_SOCK_READ, &timeout) != NS_OK) {
+             if (Ns_SockWait(req->sock, NS_SOCK_READ, req->timeout) != NS_OK) {
                  Ns_Log(Error, "TFTP: FD %d: %s: timeout %d secs", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->timeout);
                  goto done;
              }
@@ -568,7 +575,6 @@ TFTPSendError(TFTPRequest *req, int errcode, char *msg, int err)
 static int
 TFTPSendACK(TFTPRequest *req, char *buf, int len)
 {
-    Ns_Time timeout;
     int retries = 0;
 
     do {
@@ -576,9 +582,7 @@ TFTPSendACK(TFTPRequest *req, char *buf, int len)
            return -1;
        }
        do {
-          Ns_GetTime(&timeout);
-          Ns_IncrTime(&timeout, req->timeout, 0);
-          if (Ns_SockTimedWait(req->sock, NS_SOCK_READ, &timeout) != NS_OK) {
+          if (Ns_SockWait(req->sock, NS_SOCK_READ, req->timeout) != NS_OK) {
               Ns_Log(Error, "TFTP: FD %d: %s: timeout %d secs", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->timeout);
               return 0;
           }
@@ -597,7 +601,6 @@ TFTPSendACK(TFTPRequest *req, char *buf, int len)
 static int
 TFTPCmd(ClientData arg, Tcl_Interp *interp, int objc, Tcl_Obj *CONST objv[])
 {
-    Ns_Time now;
     Tcl_DString ds;
     TFTPRequest req;
     socklen_t salen = sizeof(struct sockaddr_in);
@@ -648,9 +651,7 @@ TFTPCmd(ClientData arg, Tcl_Interp *interp, int objc, Tcl_Obj *CONST objv[])
     }
     Tcl_DStringInit(&ds);
     do {
-       Ns_GetTime(&now);
-       Ns_IncrTime(&now, timeout, 0);
-       if (Ns_SockTimedWait(req.sock, NS_SOCK_READ, &now) != NS_OK) {
+       if (Ns_SockWait(req.sock, NS_SOCK_READ, timeout) != NS_OK) {
            Tcl_DStringSetLength(&ds, 0);
            Ns_DStringPrintf(&ds, "timeout");
            rc = TCL_ERROR;
