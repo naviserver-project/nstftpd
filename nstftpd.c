@@ -237,7 +237,7 @@ TFTPSockProc(SOCKET sock, void *arg, int when)
          }
          return NS_TRUE;
     }
-    close(sock);
+    ns_sockclose(sock);
     return NS_FALSE;
 }
 
@@ -446,7 +446,7 @@ TFTPProcessRequest(TFTPRequest* req)
              }
              // Last block read
              if (nread < req->blksize) {
-                 close(req->fd);
+                 ns_sockclose(req->fd);
                  req->fd = -1;
              }
              // Send ACK and wait for the next block
@@ -479,7 +479,7 @@ TFTPProcessRequest(TFTPRequest* req)
                          goto done;
                      }
                      if (req->pktsize - 4 < req->blksize) {
-                         close(req->fd);
+                         ns_sockclose(req->fd);
                          req->fd = -1;
                      }
                  }
@@ -516,10 +516,10 @@ TFTPFree(TFTPRequest *req)
 {
     if (req != NULL) {
         if (req->sock > 0) {
-            close(req->sock);
+            ns_sockclose(req->sock);
         }
         if (req->fd > 0) {
-    	    close(req->fd);
+    	    ns_sockclose(req->fd);
         }
         Ns_DStringFree(&req->ds);
         ns_free(req->file);
@@ -668,9 +668,9 @@ TFTPCmd(ClientData arg, Tcl_Interp *interp, int objc, Tcl_Obj *CONST objv[])
            }
     } while (1);
 done:
-    close(req.sock);
+    ns_sockclose(req.sock);
     if (outfile != NULL) {
-        close(outfd);
+        ns_sockclose(outfd);
         Tcl_SetObjResult(interp, Tcl_NewIntObj(total));
     } else {
         Tcl_SetObjResult(interp, Tcl_NewByteArrayObj((unsigned char*)ds.string, ds.length));
