@@ -170,6 +170,8 @@ NS_EXPORT int Ns_ModuleInit(char *server, char *module)
     }
     Ns_TclRegisterTrace(server, TFTPInterpInit, srvPtr, NS_TCL_TRACE_CREATE);
     Tcl_DStringFree(&ds);
+
+    Ns_Log(Notice, "%s: root=%s, port=%d", module, srvPtr->rootpath, srvPtr->port); 
     return NS_OK;
 }
 

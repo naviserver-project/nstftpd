@@ -11,10 +11,10 @@ This is NaviServer module that implements TFTP server
  
    nsd.tcl
  
-   ns_section    ns/servers/server/modules
+   ns_section    ns/server/servername/modules
    ns_param      nsudp        nstftpd.so
  
-   ns_section    ns/servers/server/module/nstftpd
+   ns_section    ns/server/servername/module/nstftpd
    ns_param      address    	0.0.0.0
    ns_param      port       	80
    ns_param      debug      	0
