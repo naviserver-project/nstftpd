@@ -476,10 +476,6 @@ TFTPProcessRequest(TFTPRequest* req)
                          }
                          req->block++;
                      }
-                     if (req->block == USHRT_MAX) {
-                         TFTPSendError(req, 3, "File Too Large", EFBIG);
-                         goto done;
-                     }
                      if (req->pktsize - 4 < req->blksize) {
                          ns_sockclose(req->fd);
                          req->fd = -1;
