@@ -70,7 +70,7 @@ typedef struct
    int fd;
    int op;
    int sock;
-   int block;
+   unsigned short block;
    short blksize;
    short timeout;
    struct stat fstat;
@@ -474,6 +474,10 @@ TFTPProcessRequest(TFTPRequest* req)
                              TFTPSendError(req, 3, "Unable to write", errno);
                              goto done;
                          }
+                         if (req->block == USHRT_MAX) {
+                             TFTPSendError(req, 3, "File Too Large", EFBIG);
+                             goto done;
+                         }
                          req->block++;
                      }
                      if (req->pktsize - 4 < req->blksize) {
@@ -536,7 +540,7 @@ TFTPRecv(TFTPRequest *req)
         return -1;
     }
     if (req->server->debug > 5) {
-        Ns_Log(Notice,"TFTP: FD %d: %s: recv: block %d, op %d, %d bytes", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->block, htons(req->pkt.opcode), req->pktsize);
+        Ns_Log(Notice,"TFTP: FD %d: %s: recv: block %d/%d, op %d, %d bytes", req->sock, ns_inet_ntoa(req->sa.sin_addr), htons(req->pkt.block), req->block, htons(req->pkt.opcode), req->pktsize);
     }
     return req->pktsize;
 }
@@ -552,7 +556,7 @@ TFTPSend(TFTPRequest *req, char *buf, int len)
         return -1;
     }
     if (req->server->debug > 5) {
-        Ns_Log(Notice,"TFTP: FD %d: %s: send: block %d, %d bytes", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->block, nsent);
+        Ns_Log(Notice,"TFTP: FD %d: %s: send: block %d/%d, %d bytes", req->sock, ns_inet_ntoa(req->sa.sin_addr), htons(req->pkt.block), req->block, nsent);
     }
     return nsent;
 }
