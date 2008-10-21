@@ -106,13 +106,20 @@ typedef struct
    } reply;
 } TFTPRequest;
 
-static Ns_DriverProc TFTPDriverProc;
+static Ns_DriverListenProc Listen;
+static Ns_DriverAcceptProc Accept;
+static Ns_DriverRecvProc Recv;
+static Ns_DriverSendProc Send;
+static Ns_DriverSendFileProc SendFile;
+static Ns_DriverKeepProc Keep;
+static Ns_DriverCloseProc Close;
+static Ns_DriverRequestProc Request;
+
 static Ns_SockProc TFTPSockProc;
 static TFTPRequest *TFTPNew(TFTPServer *server);
 static void TFTPProcessRequest(TFTPRequest *arg);
 static void TFTPFree(TFTPRequest *req);
 static void TFTPThread(void *arg);
-static int TFTPRequestProc(void *arg, Ns_Conn *conn);
 static int TFTPRecv(TFTPRequest *req);
 static int TFTPSend(TFTPRequest *req, char *buf, int len);
 static int TFTPSendACK(TFTPRequest *req, char *buf, int len);
@@ -143,18 +150,25 @@ NS_EXPORT int Ns_ModuleInit(char *server, char *module)
     srvPtr->address = Ns_ConfigGetValue(path, "address");
 
     if (srvPtr->drivermode) {
-        init.version = NS_DRIVER_VERSION_1;
-        init.name = "nstftp";
-        init.proc = TFTPDriverProc;
-        init.opts = NS_DRIVER_UDP|NS_DRIVER_ASYNC|NS_DRIVER_QUEUE_ONREAD;
+        init.version = NS_DRIVER_VERSION_2;
+        init.name = "nssyslogd";
+        init.listenProc = Listen;
+        init.acceptProc = Accept;
+        init.recvProc = Recv;
+        init.sendProc = Send;
+        init.sendFileProc = SendFile;
+        init.keepProc = Keep;
+        init.requestProc = Request;
+        init.closeProc = Close;
+        init.opts = NS_DRIVER_ASYNC|NS_DRIVER_NOPARSE;
         init.arg = srvPtr;
-        init.path = NULL;
+        init.path = path;
+
         if (Ns_DriverInit(server, module, &init) != NS_OK) {
             Ns_Log(Error, "nstftpd: driver init failed.");
             ns_free(srvPtr);
             return NS_ERROR;
         }
-        Ns_RegisterRequest(server, "TFTP",  "/", TFTPRequestProc, NULL, srvPtr, 0);
     } else {
         if ((srvPtr->sock = Ns_SockListenUdp(srvPtr->address, srvPtr->port)) == -1) {
             Ns_Log(Error,"nstftp: %s:%d: couldn't create socket: %s", srvPtr->address, srvPtr->port, strerror(errno));
@@ -175,76 +189,174 @@ NS_EXPORT int Ns_ModuleInit(char *server, char *module)
     return NS_OK;
 }
 
-static int
-TFTPInterpInit(Tcl_Interp *interp, void *arg)
+/*
+ *----------------------------------------------------------------------
+ *
+ * Listen --
+ *
+ *      Open a listening socket in non-blocking mode.
+ *
+ * Results:
+ *      The open socket or INVALID_SOCKET on error.
+ *
+ * Side effects:
+ *      None
+ *
+ *----------------------------------------------------------------------
+ */
+
+static SOCKET Listen(Ns_Driver *driver, CONST char *address, int port, int backlog)
 {
-    Tcl_CreateObjCommand(interp, "ns_tftp", TFTPCmd, arg, NULL);
-    return NS_OK;
-}
+    SOCKET sock;
+    TFTPServer *srvPtr = (TFTPServer*)driver->arg;
 
-static int
-TFTPDriverProc(Ns_DriverCmd cmd, Ns_Sock *sock, struct iovec *bufs, int nbufs)
-{
-    int len;
-    socklen_t salen = sizeof(struct sockaddr_in);
-
-    switch (cmd) {
-     case DriverQueue:
-
-         /*
-          *  Assign request line so our registered proc will be called
-          */
-
-         return Ns_DriverSetRequest(sock, "TFTP / TFTP/1.0");
-         break;
-
-     case DriverRecv:
-         len = recvfrom(sock->sock, bufs->iov_base, bufs->iov_len, 0, (struct sockaddr*)&sock->sa, (socklen_t*)&salen);
-         if (len == -1) {
-             Ns_Log(Error,"DriverRecv: %s: FD %d: recv from %s: %s", sock->driver->name, sock->sock, ns_inet_ntoa(sock->sa.sin_addr), strerror(errno));
-         }
-         return len;
-         break;
-
-     case DriverSend:
-         len = sendto(sock->sock, bufs->iov_base, bufs->iov_len, 0, (struct sockaddr*)&sock->sa, sizeof(struct sockaddr_in));
-         if (len == -1) {
-             Ns_Log(Error,"DriverSend: %s: FD %d: sendto %d bytes to %s: %s", sock->driver->name, sock->sock, len, ns_inet_ntoa(sock->sa.sin_addr), strerror(errno));
-         }
-         return len;
-         break;
-
-     case DriverClose:
-     case DriverKeep:
-         break;
+    sock = Ns_SockListenUdp(srvPtr->address, srvPtr->port);
+    if (sock != INVALID_SOCKET) {
+        (void) Ns_SockSetNonBlocking(sock);
     }
-    return NS_ERROR;
+    return sock;
 }
 
-static int
-TFTPSockProc(SOCKET sock, void *arg, int when)
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * Accept --
+ *
+ *      Accept a new socket in non-blocking mode.
+ *
+ * Results:
+ *      NS_DRIVER_ACCEPT_DATA  - socket accepted, data present
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------
+ */
+ 
+static NS_DRIVER_ACCEPT_STATUS Accept(Ns_Sock *sock, SOCKET listensock, struct sockaddr *sockaddrPtr, int *socklenPtr)
 {
-    TFTPServer *server = (TFTPServer*)arg;
-    TFTPRequest *req;
-
-    switch(when) {
-     case NS_SOCK_READ:
-         req = TFTPNew(server);
-         req->sock = sock;
-         if (TFTPRecv(req) > 0) {
-             Ns_ThreadCreate(TFTPThread, (void *)req, 0, 0);
-         } else {
-             req->sock = -1;
-             TFTPFree(req);
-         }
-         return NS_TRUE;
-    }
-    ns_sockclose(sock);
-    return NS_FALSE;
+    sock->sock = listensock;
+    return NS_DRIVER_ACCEPT_DATA;
 }
 
-static int
-TFTPRequestProc(void *arg, Ns_Conn *conn)
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * Recv --
+ *
+ *      Receive data into given buffers.
+ *
+ * Results:
+ *      Total number of bytes received or -1 on error or timeout.
+ *
+ * Side effects:
+ *      None
+ *
+ *----------------------------------------------------------------------
+ */
+
+static ssize_t Recv(Ns_Sock *sock, struct iovec *bufs, int nbufs, Ns_Time *timeoutPtr, int flags)
+{
+    socklen_t salen = sizeof(sock->sa);
+
+    ssize_t len = recvfrom(sock->sock, bufs->iov_base, bufs->iov_len - 1, 0, (struct sockaddr*)&sock->sa, &salen);
+    if (len == -1) {
+        Ns_Log(Error,"DriverRecv: %s: FD %d: recv from %s: %s", sock->driver->name, sock->sock, ns_inet_ntoa(sock->sa.sin_addr), strerror(errno));
+    }
+    return len;
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * Send --
+ *
+ *      Send data from given buffers.
+ *
+ * Results:
+ *      Total number of bytes sent or -1 on error or timeout.
+ *
+ * Side effects:
+ *      None
+ *
+ *----------------------------------------------------------------------
+ */
+
+static ssize_t Send(Ns_Sock *sock, struct iovec *bufs, int nbufs, Ns_Time *timeoutPtr, int flags)
+{
+    ssize_t len = sendto(sock->sock, bufs->iov_base, bufs->iov_len, 0, (struct sockaddr*)&sock->sa, sizeof(struct sockaddr_in));
+    if (len == -1) {
+        Ns_Log(Error,"DriverSend: %s: FD %d: sendto %d bytes to %s: %s", sock->driver->name, sock->sock, len, ns_inet_ntoa(sock->sa.sin_addr), strerror(errno));
+    }
+    return len;
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * SendFile --
+ *
+ *      Send given file buffers directly to socket.
+ *
+ * Results:
+ *      Total number of bytes sent or -1 on error or timeout.
+ *
+ * Side effects:
+ *      May block once for driver sendwait timeout seconds if first
+ *      attempt would block.
+ *      May block 1 or more times due to disk IO.
+ *
+ *----------------------------------------------------------------------
+ */
+
+static ssize_t SendFile(Ns_Sock *sock, Ns_FileVec *bufs, int nbufs, Ns_Time *timeoutPtr, int flags)
+{
+    return -1;
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * Keep --
+ *
+ *      Mo keepalives
+ *
+ * Results:
+ *      0, always.
+ *
+ * Side effects:
+ *      None.
+ *
+ *----------------------------------------------------------------------
+ */
+
+static int Keep(Ns_Sock *sock)
+{
+    return 0;
+}
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * Request --
+ *
+ *	Request callback for processing syslog connections
+ *
+ * Results:
+ *	NS_TRUE
+ *
+ * Side effects:
+ *  	None
+ *
+ *----------------------------------------------------------------------
+ */
+
+static int Request(void *arg, Ns_Conn *conn)
 {
     TFTPServer *server = arg;
     Ns_Sock *sock = Ns_ConnSockPtr(conn);
@@ -268,9 +380,60 @@ TFTPRequestProc(void *arg, Ns_Conn *conn)
         Ns_Log(Error, "TFTP: FD %d: %s: invalid connection", req->sock, ns_inet_ntoa(req->sa.sin_addr));
     }
     TFTPFree(req);
+
+    return NS_FILTER_BREAK;
+}
+
+
+/*
+ *----------------------------------------------------------------------
+ *
+ * Close --
+ *
+ *      Close the connection socket.
+ *
+ * Results:
+ *      None.
+ *
+ * Side effects:
+ *      Does not close UDP socket
+ *
+ *----------------------------------------------------------------------
+ */
+
+static void Close(Ns_Sock *sock)
+{
+    sock->sock = -1;
+}
+
+static int
+TFTPInterpInit(Tcl_Interp *interp, void *arg)
+{
+    Tcl_CreateObjCommand(interp, "ns_tftp", TFTPCmd, arg, NULL);
     return NS_OK;
 }
 
+static int
+TFTPSockProc(SOCKET sock, void *arg, int when)
+{
+    TFTPServer *server = (TFTPServer*)arg;
+    TFTPRequest *req;
+
+    switch(when) {
+     case NS_SOCK_READ:
+         req = TFTPNew(server);
+         req->sock = sock;
+         if (TFTPRecv(req) > 0) {
+             Ns_ThreadCreate(TFTPThread, (void *)req, 0, 0);
+         } else {
+             req->sock = -1;
+             TFTPFree(req);
+         }
+         return NS_TRUE;
+    }
+    ns_sockclose(sock);
+    return NS_FALSE;
+}
 
 static void
 TFTPThread(void *arg)
@@ -370,7 +533,7 @@ TFTPProcessRequest(TFTPRequest* req)
     }
     fstat(req->fd, &req->fstat);
     if (server->debug > 2) {
-        Ns_Log(Notice,"TFTP: FD %d: %s: file %s, size %lu", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->file, req->fstat.st_size);
+        Ns_Log(Notice,"TFTP: FD %d: %s: file %s, size %llu", req->sock, ns_inet_ntoa(req->sa.sin_addr), req->file, req->fstat.st_size);
     }
 
     /*
@@ -403,7 +566,7 @@ TFTPProcessRequest(TFTPRequest* req)
     	    	strcpy(str, ptr);
     	    	str += strlen(str) + 1;
     	    	ptr += strlen(ptr) + 1;
-    	    	sprintf(str, "%lu", req->fstat.st_size);
+    	    	sprintf(str, "%llu", req->fstat.st_size);
     	    	str += strlen(str) + 1;
     	    } else
             if (!strcasecmp(ptr, "timeout")) {
