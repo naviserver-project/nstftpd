@@ -134,7 +134,7 @@ NS_EXPORT int Ns_ModuleInit(char *server, char *module)
     char *path;
     Tcl_DString ds;
     TFTPServer *srvPtr;
-    Ns_DriverInitData init;
+    Ns_DriverInitData init = {0};
 
     srvPtr = ns_calloc(1, sizeof(TFTPServer));
     path = Ns_ConfigGetPath(server,module,NULL);
