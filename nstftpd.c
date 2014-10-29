@@ -197,7 +197,7 @@ NS_EXPORT int Ns_ModuleInit(char *server, char *module)
  *      Open a listening socket in non-blocking mode.
  *
  * Results:
- *      The open socket or INVALID_SOCKET on error.
+ *      The open socket or NS_INVALID_SOCKET on error.
  *
  * Side effects:
  *      None
@@ -205,13 +205,14 @@ NS_EXPORT int Ns_ModuleInit(char *server, char *module)
  *----------------------------------------------------------------------
  */
 
-static SOCKET Listen(Ns_Driver *driver, CONST char *address, int port, int backlog)
+static NS_SOCKET 
+Listen(Ns_Driver *driver, CONST char *address, int port, int backlog)
 {
     SOCKET sock;
     TFTPServer *srvPtr = (TFTPServer*)driver->arg;
 
     sock = Ns_SockListenUdp(srvPtr->address, srvPtr->port);
-    if (sock != INVALID_SOCKET) {
+    if (sock != NS_INVALID_SOCKET) {
         (void) Ns_SockSetNonBlocking(sock);
     }
     return sock;
@@ -234,7 +235,8 @@ static SOCKET Listen(Ns_Driver *driver, CONST char *address, int port, int backl
  *----------------------------------------------------------------------
  */
  
-static NS_DRIVER_ACCEPT_STATUS Accept(Ns_Sock *sock, SOCKET listensock, struct sockaddr *sockaddrPtr, int *socklenPtr)
+static NS_DRIVER_ACCEPT_STATUS 
+Accept(Ns_Sock *sock, NS_SOCKET listensock, struct sockaddr *sockaddrPtr, socklen_t *socklenPtr)
 {
     sock->sock = listensock;
     return NS_DRIVER_ACCEPT_DATA;
@@ -285,11 +287,14 @@ static ssize_t Recv(Ns_Sock *sock, struct iovec *bufs, int nbufs, Ns_Time *timeo
  *----------------------------------------------------------------------
  */
 
-static ssize_t Send(Ns_Sock *sock, struct iovec *bufs, int nbufs, Ns_Time *timeoutPtr, unsigned int flags)
+static ssize_t 
+Send(Ns_Sock *sock, const struct iovec *bufs, int nbufs, const Ns_Time *timeoutPtr, unsigned int flags)
 {
     ssize_t len = sendto(sock->sock, bufs->iov_base, bufs->iov_len, 0, (struct sockaddr*)&sock->sa, sizeof(struct sockaddr_in));
     if (len == -1) {
-        Ns_Log(Error,"DriverSend: %s: FD %d: sendto %d bytes to %s: %s", sock->driver->name, sock->sock, len, ns_inet_ntoa(sock->sa.sin_addr), strerror(errno));
+        Ns_Log(Error,"DriverSend: %s: FD %d: sendto %ld bytes to %s: %s", 
+	       sock->driver->name, sock->sock, len, ns_inet_ntoa(sock->sa.sin_addr), 
+	       strerror(errno));
     }
     return len;
 }
@@ -414,7 +419,7 @@ TFTPInterpInit(Tcl_Interp *interp, void *arg)
 }
 
 static int
-TFTPSockProc(SOCKET sock, void *arg, int when)
+TFTPSockProc(NS_SOCKET sock, void *arg, unsigned int when)
 {
     TFTPServer *server = (TFTPServer*)arg;
     TFTPRequest *req;
