@@ -58,8 +58,8 @@ typedef struct {
    int debug;
    int sock;
    int port;
-   char *address;
-   char *proc;
+    const char *address;
+    const char *proc;
 } TFTPServer;
 
 typedef struct
@@ -376,7 +376,7 @@ static int Request(void *arg, Ns_Conn *conn)
         TFTPProcessRequest(req);
         /* For access log file */
         if (req->file) {
-            ns_free(conn->request->line);
+            ns_free((char *)conn->request->line);
             snprintf(req->data, sizeof(req->data), "%s %s TFTP/2.0", req->op == 1 ? "GET" : "PUT", req->file);
             conn->request->line = ns_strdup(req->data);
             Ns_ConnSetContentSent(conn, req->fstat.st_size);
