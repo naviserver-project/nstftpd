@@ -10,7 +10,7 @@ MOD      =  nstftpd.so
 #
 # Objects to build.
 #
-OBJS     = nstftpd.o
+MODOBJS     = nstftpd.o
 
 PROCS   = tftpd_procs.tcl
 

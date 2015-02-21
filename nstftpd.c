@@ -124,14 +124,15 @@ static int TFTPRecv(TFTPRequest *req);
 static int TFTPSend(TFTPRequest *req, char *buf, int len);
 static int TFTPSendACK(TFTPRequest *req, char *buf, int len);
 static int TFTPSendError(TFTPRequest *req, int errcode, char *msg, int err);
-static int TFTPInterpInit(Tcl_Interp *interp, void *arg);
 static int TFTPCmd(ClientData arg, Tcl_Interp *interp,int objc,Tcl_Obj *CONST objv[]);
+
+static Ns_TclTraceProc TFTPInterpInit;
 
 NS_EXPORT int Ns_ModuleVersion = 1;
 
 NS_EXPORT int Ns_ModuleInit(char *server, char *module)
 {
-    char *path;
+    const char *path;
     Tcl_DString ds;
     TFTPServer *srvPtr;
     Ns_DriverInitData init = {0};
@@ -162,7 +163,7 @@ NS_EXPORT int Ns_ModuleInit(char *server, char *module)
         init.closeProc = Close;
         init.opts = NS_DRIVER_ASYNC|NS_DRIVER_NOPARSE;
         init.arg = srvPtr;
-        init.path = path;
+        init.path = (char *)path;
 
         if (Ns_DriverInit(server, module, &init) != NS_OK) {
             Ns_Log(Error, "nstftpd: driver init failed.");
@@ -208,7 +209,7 @@ NS_EXPORT int Ns_ModuleInit(char *server, char *module)
 static NS_SOCKET 
 Listen(Ns_Driver *driver, CONST char *address, int port, int backlog)
 {
-    SOCKET sock;
+    NS_SOCKET sock;
     TFTPServer *srvPtr = (TFTPServer*)driver->arg;
 
     sock = Ns_SockListenUdp(srvPtr->address, srvPtr->port);
@@ -329,10 +330,10 @@ static ssize_t SendFile(Ns_Sock *sock, Ns_FileVec *bufs, int nbufs, Ns_Time *tim
  *
  * Keep --
  *
- *      Mo keepalives
+ *      No keepalives
  *
  * Results:
- *      0, always.
+ *      NS_FALSE, always.
  *
  * Side effects:
  *      None.
@@ -340,9 +341,9 @@ static ssize_t SendFile(Ns_Sock *sock, Ns_FileVec *bufs, int nbufs, Ns_Time *tim
  *----------------------------------------------------------------------
  */
 
-static int Keep(Ns_Sock *sock)
+static bool Keep(Ns_Sock *sock)
 {
-    return 0;
+    return NS_FALSE;
 }
 
 /*
@@ -412,20 +413,20 @@ static void Close(Ns_Sock *sock)
 }
 
 static int
-TFTPInterpInit(Tcl_Interp *interp, void *arg)
+TFTPInterpInit(Tcl_Interp *interp, const void *arg)
 {
-    Tcl_CreateObjCommand(interp, "ns_tftp", TFTPCmd, arg, NULL);
+    Tcl_CreateObjCommand(interp, "ns_tftp", TFTPCmd, (ClientData)arg, NULL);
     return NS_OK;
 }
 
-static int
+static bool
 TFTPSockProc(NS_SOCKET sock, void *arg, unsigned int when)
 {
     TFTPServer *server = (TFTPServer*)arg;
     TFTPRequest *req;
 
     switch(when) {
-     case NS_SOCK_READ:
+    case NS_SOCK_READ:
          req = TFTPNew(server);
          req->sock = sock;
          if (TFTPRecv(req) > 0) {
