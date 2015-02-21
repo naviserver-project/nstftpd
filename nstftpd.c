@@ -163,7 +163,7 @@ NS_EXPORT int Ns_ModuleInit(char *server, char *module)
         init.closeProc = Close;
         init.opts = NS_DRIVER_ASYNC|NS_DRIVER_NOPARSE;
         init.arg = srvPtr;
-        init.path = (char *)path;
+        init.path = path;
 
         if (Ns_DriverInit(server, module, &init) != NS_OK) {
             Ns_Log(Error, "nstftpd: driver init failed.");
