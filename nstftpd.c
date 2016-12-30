@@ -130,7 +130,7 @@ static Ns_TclTraceProc TFTPInterpInit;
 
 NS_EXPORT int Ns_ModuleVersion = 1;
 
-NS_EXPORT int Ns_ModuleInit(char *server, char *module)
+NS_EXPORT int Ns_ModuleInit(const char *server, const char *module)
 {
     const char *path;
     Tcl_DString ds;
@@ -207,7 +207,7 @@ NS_EXPORT int Ns_ModuleInit(char *server, char *module)
  */
 
 static NS_SOCKET 
-Listen(Ns_Driver *driver, CONST char *address, int port, int backlog)
+Listen(Ns_Driver *driver, CONST char *address, int port, int backlog, bool reusePort)
 {
     NS_SOCKET sock;
     TFTPServer *srvPtr = (TFTPServer*)driver->arg;
