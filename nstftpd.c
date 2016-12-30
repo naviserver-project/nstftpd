@@ -171,7 +171,7 @@ NS_EXPORT int Ns_ModuleInit(const char *server, const char *module)
             return NS_ERROR;
         }
     } else {
-        if ((srvPtr->sock = Ns_SockListenUdp(srvPtr->address, srvPtr->port)) == -1) {
+      if ((srvPtr->sock = Ns_SockListenUdp(srvPtr->address, srvPtr->port, NS_FALSE)) == -1) {
             Ns_Log(Error,"nstftp: %s:%d: couldn't create socket: %s", srvPtr->address, srvPtr->port, strerror(errno));
             ns_free(srvPtr);
             return NS_ERROR;
@@ -212,7 +212,7 @@ Listen(Ns_Driver *driver, CONST char *address, int port, int backlog, bool reuse
     NS_SOCKET sock;
     TFTPServer *srvPtr = (TFTPServer*)driver->arg;
 
-    sock = Ns_SockListenUdp(srvPtr->address, srvPtr->port);
+    sock = Ns_SockListenUdp(srvPtr->address, srvPtr->port, reusePort);
     if (sock != NS_INVALID_SOCKET) {
         (void) Ns_SockSetNonBlocking(sock);
     }
