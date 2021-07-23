@@ -131,7 +131,7 @@ static Ns_TclTraceProc TFTPInterpInit;
 NS_EXPORT int Ns_ModuleVersion = 1;
 NS_EXPORT Ns_ModuleInitProc Ns_ModuleInit;
 
-NS_EXPORT int Ns_ModuleInit(const char *server, const char *module)
+NS_EXPORT Ns_ReturnCode Ns_ModuleInit(const char *server, const char *module)
 {
     const char *path;
     Tcl_DString ds;
@@ -429,7 +429,7 @@ static void Close(Ns_Sock *sock)
     sock->sock = -1;
 }
 
-static int
+static Ns_ReturnCode
 TFTPInterpInit(Tcl_Interp *interp, const void *arg)
 {
     Tcl_CreateObjCommand(interp, "ns_tftp", TFTPCmd, (ClientData)arg, NULL);
