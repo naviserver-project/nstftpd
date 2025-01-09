@@ -297,7 +297,11 @@ static ssize_t Recv(Ns_Sock *sock, struct iovec *bufs, int UNUSED(nbufs), Ns_Tim
  */
 
 static ssize_t
-Send(Ns_Sock *sock, const struct iovec *bufs, int UNUSED(nbufs), const Ns_Time *UNUSED(timeoutPtr), unsigned int UNUSED(flags))
+Send(Ns_Sock *sock, const struct iovec *bufs, int UNUSED(nbufs),
+#if NS_MAJOR_VERSION < 5
+     const Ns_Time *UNUSED(timeoutPtr),
+#endif
+     unsigned int UNUSED(flags))
 {
     ssize_t len = sendto(sock->sock, bufs->iov_base, bufs->iov_len, 0, (struct sockaddr*)&sock->sa, sizeof(struct sockaddr_in));
     if (len == -1) {
@@ -332,7 +336,11 @@ Send(Ns_Sock *sock, const struct iovec *bufs, int UNUSED(nbufs), const Ns_Time *
  *----------------------------------------------------------------------
  */
 
-static ssize_t SendFile(Ns_Sock *UNUSED(sock), Ns_FileVec *UNUSED(bufs), int UNUSED(nbufs), Ns_Time *UNUSED(timeoutPtr), unsigned int UNUSED(flags))
+static ssize_t SendFile(Ns_Sock *UNUSED(sock), Ns_FileVec *UNUSED(bufs), int UNUSED(nbufs),
+#if NS_MAJOR_VERSION < 5
+                        Ns_Time *UNUSED(timeoutPtr),
+#endif
+                        unsigned int UNUSED(flags))
 {
     return -1;
 }
